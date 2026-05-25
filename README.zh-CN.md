@@ -42,6 +42,11 @@ wt add 3000
 # - 安装依赖
 # - 在端口 3000 上启动开发服务器
 
+# 名称以数字结尾时，也会把这些数字当作 dev PORT
+wt add ui9083
+# - 创建分支 feat/ui9083
+# - 以 PORT=9083 启动配置好的 dev 命令
+
 # 3. 在 worktree 之间导航
 wt 3000    # 跳转到功能 worktree
 wt main    # 返回主仓库
@@ -97,8 +102,14 @@ wt rm 3000
 | `wt lang`      | 设置 CLI 语言（en/zh）                         | `wt lang set zh`   |
 | `wt theme`     | 切换 `wt list` 主题（`box`\|`sage`\|`archer`） | `wt theme set box` |
 | `wt help`      | 显示命令参考                                   | `wt help`          |
+| `wt help <command>` | 显示子命令帮助                           | `wt help add`      |
 | `wt reinstall` | 更新到最新版本                                 | `wt reinstall`     |
 | `wt uninstall` | 删除 worktree.sh                               | `wt uninstall`     |
+
+## Help 与命名规则
+
+- 所有核心命令都支持 `wt <command> --help`，而 `wt help <command>` 是等价的长写法。
+- `wt add <name>` 会把名称末尾的数字当作 dev `PORT`。例如 `wt add ui9083` 会保留 worktree 名称 `ui9083`、创建分支 `feat/ui9083`，并以 `PORT=9083` 启动已配置的 dev 命令。
 
 ## 高级功能
 
@@ -122,6 +133,12 @@ wt sync 3000 3001
 # 禁用自动开发服务器
 wt config set add.serve-dev.enabled false
 
+# 启动脚本较慢时，延长端口就绪等待时间
+wt config set add.serve-dev.ready-timeout 120
+
+# 对启动器脚本保留一个短暂的就绪后观察窗口
+wt config set add.serve-dev.settle-timeout 8
+
 # 更改分支前缀
 wt config set add.branch-prefix "feature/"
 
@@ -130,6 +147,9 @@ wt config list
 ```
 
 配置按项目存储在 `~/.worktree.sh/projects/<slug>/config.kv` 中。
+
+- `add.serve-dev.ready-timeout` 控制 `wt add` 等待目标端口开始监听的最长秒数。
+- `add.serve-dev.settle-timeout` 会在端口就绪后再短暂观察一段时间，避免 `start-smart.sh` 这类包装启动脚本被误判为失败。
 
 ## 使用场景
 

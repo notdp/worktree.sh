@@ -1,1 +1,7 @@
 .DS_Store
+
+# Local OMX session artifacts
+.omx/
+findings.md
+progress.md
+task_plan.md

@@ -42,6 +42,11 @@ wt add 3000
 # - Installs dependencies
 # - Starts dev server on port 3000
 
+# Names with trailing digits also set the dev PORT
+wt add ui9083
+# - Creates branch feat/ui9083
+# - Starts the configured dev command with PORT=9083
+
 # 3. Navigate between worktrees
 wt 3000    # Jump to feature worktree
 wt main    # Return to main repository
@@ -97,8 +102,14 @@ wt rm 3000
 | `wt lang`      | Set CLI language (en/zh)     | `wt lang set zh` |
 | `wt theme`     | Switch `wt list` theme (`box`\|`sage`\|`archer`) | `wt theme set box` |
 | `wt help`      | Show command reference       | `wt help`        |
+| `wt help <command>` | Show subcommand help     | `wt help add`    |
 | `wt reinstall` | Update to latest version     | `wt reinstall`   |
 | `wt uninstall` | Remove worktree.sh           | `wt uninstall`   |
+
+## Help and Naming Rules
+
+- Every core command supports `wt <command> --help`, and `wt help <command>` is the equivalent long form.
+- `wt add <name>` uses trailing digits as the dev `PORT`. For example, `wt add ui9083` keeps the worktree name `ui9083`, creates branch `feat/ui9083`, and runs the configured dev command with `PORT=9083`.
 
 ## Advanced Features
 
@@ -122,6 +133,12 @@ wt sync 3000 3001
 # Disable auto dev server
 wt config set add.serve-dev.enabled false
 
+# Wait longer for a slow startup script before reporting success
+wt config set add.serve-dev.ready-timeout 120
+
+# Keep a short post-ready observation window for launcher scripts
+wt config set add.serve-dev.settle-timeout 8
+
 # Change branch prefix
 wt config set add.branch-prefix "feature/"
 
@@ -130,6 +147,9 @@ wt config list
 ```
 
 Configuration is stored per-project in `~/.worktree.sh/projects/<slug>/config.kv`.
+
+- `add.serve-dev.ready-timeout` controls how long `wt add` waits for the inferred port to start listening.
+- `add.serve-dev.settle-timeout` keeps watching briefly after readiness so wrapper scripts like `start-smart.sh` can exit without causing a false failure.
 
 ## Use Cases
 

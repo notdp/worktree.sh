@@ -22,10 +22,14 @@ readonly CONFIG_DEFAULT_WORKING_REPO_PATH="${HOME}/Developer/your-project"
 readonly CONFIG_DEFAULT_WORKTREE_ADD_BRANCH_PREFIX="feat/"
 readonly CONFIG_DEFAULT_SERVE_DEV_LOGGING_PATH="tmp"
 readonly CONFIG_DEFAULT_SERVE_DEV_ENABLED=1
+readonly CONFIG_DEFAULT_SERVE_DEV_READY_TIMEOUT=60
+readonly CONFIG_DEFAULT_SERVE_DEV_SETTLE_TIMEOUT=5
 readonly CONFIG_DEFAULT_INSTALL_DEPS_ENABLED=1
 readonly CONFIG_DEFAULT_COPY_ENV_ENABLED=1
 readonly CONFIG_DEFAULT_INSTALL_DEPS_COMMAND=""
 readonly CONFIG_DEFAULT_SERVE_DEV_COMMAND=""
+readonly CONFIG_DEFAULT_ADD_POST_COMMAND=""
+readonly CONFIG_DEFAULT_REMOVE_PRE_COMMAND=""
 readonly CONFIG_DEFAULT_LANGUAGE="en"
 readonly CONFIG_DEFAULT_THEME="box"
 readonly -a CONFIG_DEFAULT_COPY_ENV_FILES=(".env" ".env.local")
@@ -36,10 +40,14 @@ WORKTREE_NAME_PREFIX=""
 WORKTREE_BRANCH_PREFIX=""
 SERVE_DEV_LOGGING_PATH=""
 SERVE_DEV_ENABLED=0
+SERVE_DEV_READY_TIMEOUT=0
+SERVE_DEV_SETTLE_TIMEOUT=0
 INSTALL_DEPS_ENABLED=0
 COPY_ENV_ENABLED=0
 INSTALL_DEPS_COMMAND=""
 SERVE_DEV_COMMAND=""
+ADD_POST_COMMAND=""
+REMOVE_PRE_COMMAND=""
 LANGUAGE="$CONFIG_DEFAULT_LANGUAGE"
 LIST_THEME="$CONFIG_DEFAULT_THEME"
 WORKING_REPO_PATH_CONFIGURED=0
@@ -1837,6 +1845,21 @@ project_remove_worktree() {
     return 1
   fi
 
+  local hook_name=""
+  if [ -n "$branch" ]; then
+    hook_name="${branch##*/}"
+  else
+    hook_name="$(basename "$path")"
+    if [ -n "$WORKTREE_NAME_PREFIX" ] && [[ "$hook_name" == "$WORKTREE_NAME_PREFIX"* ]]; then
+      hook_name="${hook_name#"$WORKTREE_NAME_PREFIX"}"
+    fi
+  fi
+
+  if ! run_configured_hook_command "$REMOVE_PRE_COMMAND" "$PROJECT_DIR_ABS" "remove.pre" "$hook_name" "$path" "$branch"; then
+    PROJECT_REMOVE_LAST_ERROR='remove pre-command failed'
+    return 1
+  fi
+
   local removal_failure=0
   local removal_output=""
 
@@ -1869,7 +1892,9 @@ project_remove_worktree() {
   fi
 
   if [ -n "$branch" ] && git_at_path "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
-    if git_at_path "$repo_path" branch -D "$branch" > /dev/null 2>&1; then
+    if protected_worktree_branch "$branch"; then
+      info "$(msg remove_branch_skip_protected "$path" "$branch" "$branch")"
+    elif git_at_path "$repo_path" branch -D "$branch" > /dev/null 2>&1; then
       info "$(msg removed_branch "$branch")"
     fi
   fi
@@ -2363,6 +2388,9 @@ config_default_value() {
   add.install-deps.command)
     printf '%s\n' "$CONFIG_DEFAULT_INSTALL_DEPS_COMMAND"
     ;;
+  add.post-command)
+    printf '%s\n' "$CONFIG_DEFAULT_ADD_POST_COMMAND"
+    ;;
   add.serve-dev.enabled)
     config_bool_to_string "$CONFIG_DEFAULT_SERVE_DEV_ENABLED"
     ;;
@@ -2371,6 +2399,15 @@ config_default_value() {
     ;;
   add.serve-dev.logging-path)
     printf '%s\n' "$CONFIG_DEFAULT_SERVE_DEV_LOGGING_PATH"
+    ;;
+  add.serve-dev.ready-timeout)
+    printf '%s\n' "$CONFIG_DEFAULT_SERVE_DEV_READY_TIMEOUT"
+    ;;
+  add.serve-dev.settle-timeout)
+    printf '%s\n' "$CONFIG_DEFAULT_SERVE_DEV_SETTLE_TIMEOUT"
+    ;;
+  remove.pre-command)
+    printf '%s\n' "$CONFIG_DEFAULT_REMOVE_PRE_COMMAND"
     ;;
   *)
     return 1
@@ -2647,6 +2684,18 @@ init_settings_apply_from_sources() {
     SERVE_DEV_COMMAND="$value"
   fi
 
+  if value=$(config_get "add.serve-dev.ready-timeout" 2> /dev/null); then
+    [ -n "$value" ] && SERVE_DEV_READY_TIMEOUT="$value"
+  fi
+
+  if value=$(config_get "add.serve-dev.settle-timeout" 2> /dev/null); then
+    [ -n "$value" ] && SERVE_DEV_SETTLE_TIMEOUT="$value"
+  fi
+
+  if value=$(config_get "add.post-command" 2> /dev/null); then
+    ADD_POST_COMMAND="$value"
+  fi
+
   if value=$(config_get "add.install-deps.enabled" 2> /dev/null); then
     if bool_val=$(parse_bool "$value" 2> /dev/null); then
       INSTALL_DEPS_ENABLED="$bool_val"
@@ -2686,6 +2735,10 @@ init_settings_apply_from_sources() {
     fi
   fi
 
+  if value=$(config_get "remove.pre-command" 2> /dev/null); then
+    REMOVE_PRE_COMMAND="$value"
+  fi
+
   return 0
 }
 
@@ -2693,12 +2746,16 @@ init_settings_defaults() {
   WORKING_REPO_PATH="$CONFIG_DEFAULT_WORKING_REPO_PATH"
   SERVE_DEV_LOGGING_PATH="$CONFIG_DEFAULT_SERVE_DEV_LOGGING_PATH"
   SERVE_DEV_ENABLED="$CONFIG_DEFAULT_SERVE_DEV_ENABLED"
+  SERVE_DEV_READY_TIMEOUT="$CONFIG_DEFAULT_SERVE_DEV_READY_TIMEOUT"
+  SERVE_DEV_SETTLE_TIMEOUT="$CONFIG_DEFAULT_SERVE_DEV_SETTLE_TIMEOUT"
   INSTALL_DEPS_ENABLED="$CONFIG_DEFAULT_INSTALL_DEPS_ENABLED"
   COPY_ENV_ENABLED="$CONFIG_DEFAULT_COPY_ENV_ENABLED"
   WORKTREE_BRANCH_PREFIX="$CONFIG_DEFAULT_WORKTREE_ADD_BRANCH_PREFIX"
   COPY_ENV_FILE_SELECTION=("${CONFIG_DEFAULT_COPY_ENV_FILES[@]}")
   INSTALL_DEPS_COMMAND="$CONFIG_DEFAULT_INSTALL_DEPS_COMMAND"
   SERVE_DEV_COMMAND="$CONFIG_DEFAULT_SERVE_DEV_COMMAND"
+  ADD_POST_COMMAND="$CONFIG_DEFAULT_ADD_POST_COMMAND"
+  REMOVE_PRE_COMMAND="$CONFIG_DEFAULT_REMOVE_PRE_COMMAND"
   WORKING_REPO_PATH_CONFIGURED=0
   LANGUAGE="$CONFIG_DEFAULT_LANGUAGE"
   LIST_THEME="$CONFIG_DEFAULT_THEME"
@@ -2797,7 +2854,7 @@ usage() {
 
 核心命令:
   init               将当前仓库设为 wt 的默认项目
-  add <name>         创建新 worktree，复制环境文件、安装依赖并启动 dev server（可通过 wt config 调整）
+  add <name>         创建新 worktree；名称为纯数字或以数字结尾时会自动推断 dev 端口
   main               跳转到主 worktree
   merge <name>       将指定 worktree 的分支（feat/<name>）合并到主分支
   sync [all|name ...] 将主工作区的暂存改动同步到其他 worktree
@@ -2810,6 +2867,10 @@ usage() {
   uninstall          卸载 wt 并清理 shell 集成
   reinstall          运行 uninstall.sh + install.sh 重新部署 wt
   help               显示此帮助
+
+帮助:
+  wt help <command>  查看子命令帮助
+  wt <command> --help 与上面等价，例如 wt add --help
 
 ${dir_banner_zh}
 
@@ -2824,7 +2885,7 @@ Usage:
 
 Core commands:
   init               Remember this repository as wt's default project
-  add <name>         Create a new worktree, copy env files, install deps, start dev server (tunable via wt config)
+  add <name>         Create a new worktree; numeric names or trailing digits also infer the dev port
   main               Jump to the main worktree
   merge <name>       Merge the feature branch (feat/<name>) back into the base branch
   sync [all|name ...] Sync staged changes from the main workspace into other worktrees
@@ -2837,6 +2898,10 @@ Core commands:
   uninstall          Uninstall wt and clean shell hooks
   reinstall          Run uninstall.sh + install.sh to refresh wt
   help               Show this guide
+
+Help:
+  wt help <command>  Show subcommand help
+  wt <command> --help Same as above, for example wt add --help
 
 ${dir_banner_en}
 
@@ -3110,6 +3175,91 @@ worktree_branch_for_path() {
   worktree_branch_for_path_in_repo "$PROJECT_DIR_ABS" "$lookup_path"
 }
 
+protected_worktree_branch() {
+  case "${1:-}" in
+  main | master | develop | dev)
+    return 0
+    ;;
+  esac
+
+  return 1
+}
+
+expected_worktree_branch_name() {
+  if [ $# -lt 1 ]; then
+    return 1
+  fi
+
+  local name="$1"
+  local branch_prefix="${2:-}"
+
+  if [ -n "$branch_prefix" ]; then
+    printf '%s%s\n' "$branch_prefix" "$name"
+  else
+    printf '%s\n' "$name"
+  fi
+}
+
+WT_VALIDATED_REMOVE_BRANCH=""
+WT_REMOVE_BRANCH_REASON=""
+WT_REMOVE_BRANCH_EXPECTED=""
+
+validate_removable_worktree_branch() {
+  if [ $# -lt 2 ]; then
+    return 1
+  fi
+
+  local name="$1"
+  local actual_branch="$2"
+  local branch_prefix="${3:-}"
+
+  WT_VALIDATED_REMOVE_BRANCH=""
+  WT_REMOVE_BRANCH_REASON=""
+  WT_REMOVE_BRANCH_EXPECTED=""
+  WT_REMOVE_BRANCH_EXPECTED=$(expected_worktree_branch_name "$name" "$branch_prefix")
+
+  if [ -z "$actual_branch" ]; then
+    WT_REMOVE_BRANCH_REASON='missing'
+    return 1
+  fi
+
+  if protected_worktree_branch "$actual_branch"; then
+    WT_REMOVE_BRANCH_REASON='protected'
+    return 1
+  fi
+
+  if [ -n "$WT_REMOVE_BRANCH_EXPECTED" ] && [ "$actual_branch" != "$WT_REMOVE_BRANCH_EXPECTED" ]; then
+    WT_REMOVE_BRANCH_REASON='mismatch'
+    return 1
+  fi
+
+  WT_VALIDATED_REMOVE_BRANCH="$actual_branch"
+  return 0
+}
+
+log_skipped_branch_removal() {
+  if [ $# -lt 1 ]; then
+    return 1
+  fi
+
+  local target_path="$1"
+  local actual_branch="${2:-}"
+  local expected_branch="${3:-$WT_REMOVE_BRANCH_EXPECTED}"
+  local reason="${4:-$WT_REMOVE_BRANCH_REASON}"
+
+  case "$reason" in
+  protected)
+    info "$(msg remove_branch_skip_protected "$target_path" "$actual_branch" "$expected_branch")"
+    ;;
+  mismatch)
+    info "$(msg remove_branch_skip_mismatch "$target_path" "$actual_branch" "$expected_branch")"
+    ;;
+  missing)
+    info "$(msg remove_branch_skip_missing "$target_path" "$expected_branch")"
+    ;;
+  esac
+}
+
 branch_for() {
   local name="$1"
   local target_path
@@ -3205,12 +3355,45 @@ git_at_path() {
 }
 
 copy_env_file() {
-  local file_name="$1"
+  local entry="$1"
   local target_dir="$2"
-  if [ -f "$PROJECT_DIR_ABS/$file_name" ]; then
-    cp "$PROJECT_DIR_ABS/$file_name" "$target_dir/"
-    info "$(msg copy_env_file "$file_name")"
+  local source_rel="$entry"
+  local dest_rel=""
+
+  if [[ "$entry" == *:* ]]; then
+    source_rel="${entry%%:*}"
+    dest_rel="${entry#*:}"
   fi
+
+  if [ -z "$dest_rel" ]; then
+    dest_rel="$source_rel"
+  fi
+
+  local source_path="$PROJECT_DIR_ABS/$source_rel"
+  local dest_path="$target_dir/$dest_rel"
+
+  if [ -d "$source_path" ]; then
+    mkdir -p "$dest_path"
+    if command -v rsync > /dev/null 2>&1; then
+      rsync -a "$source_path/" "$dest_path/"
+    else
+      cp -R "$source_path"/. "$dest_path/"
+    fi
+    info "$(msg copy_env_file "$source_rel" "$dest_rel")"
+    return
+  fi
+
+  if [ -f "$source_path" ]; then
+    local dest_dir
+    dest_dir=$(dirname "$dest_path")
+    mkdir -p "$dest_dir"
+    dest_path=${dest_path%/}
+    cp "$source_path" "$dest_path"
+    info "$(msg copy_env_file "$source_rel" "$dest_rel")"
+    return
+  fi
+
+  info "$(msg copy_env_missing "$source_rel")"
 }
 
 command_exists_for_line() {
@@ -3237,6 +3420,81 @@ command_exists_for_line() {
   done
 
   return 1
+}
+
+port_is_listening() {
+  local port="${1:-}"
+  if [ -z "$port" ]; then
+    return 1
+  fi
+
+  case "$port" in
+  *[!0-9]*)
+    return 1
+    ;;
+  esac
+
+  if command -v lsof > /dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN > /dev/null 2>&1
+    return $?
+  fi
+
+  (exec 3<> "/dev/tcp/127.0.0.1/$port") > /dev/null 2>&1
+}
+
+wait_for_dev_port() {
+  local port="${1:?port is required}"
+  local timeout_sec="${2:-60}"
+  local pid="${3:-}"
+  local exit_grace_sec="${4:-2}"
+  local waited=0
+  local dead_wait=0
+
+  while [ "$waited" -lt "$timeout_sec" ]; do
+    if port_is_listening "$port"; then
+      return 0
+    fi
+
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2> /dev/null; then
+      dead_wait=$((dead_wait + 1))
+      if [ "$dead_wait" -ge "$exit_grace_sec" ]; then
+        return 1
+      fi
+    else
+      dead_wait=0
+    fi
+
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  return 2
+}
+
+wait_for_dev_settle() {
+  local port="${1:?port is required}"
+  local pid="${2:-}"
+  local timeout_sec="${3:-5}"
+  local waited=0
+
+  if [ -z "$pid" ]; then
+    return 0
+  fi
+
+  while [ "$waited" -lt "$timeout_sec" ]; do
+    if ! kill -0 "$pid" 2> /dev/null; then
+      return 0
+    fi
+
+    if ! port_is_listening "$port"; then
+      return 1
+    fi
+
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  return 0
 }
 
 node_lockfile_present() {
@@ -3304,6 +3562,42 @@ run_install_command() {
   (
     cd "$worktree_path" || exit
     sh -c "$command_line" >&2
+  )
+}
+
+run_configured_hook_command() {
+  local command_line="${1:-}"
+  local cwd="${2:-}"
+  local phase="${3:-hook}"
+  local worktree_name="${4:-}"
+  local worktree_path="${5:-}"
+  local worktree_branch="${6:-}"
+
+  if [ -z "$command_line" ]; then
+    return 0
+  fi
+
+  if ! command_exists_for_line "$command_line"; then
+    info "⚠️  $phase hook command not found: $command_line"
+    return 1
+  fi
+
+  if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
+    info "⚠️  $phase hook working directory missing: $cwd"
+    return 1
+  fi
+
+  info "⚙️  Running $phase hook: $command_line"
+
+  (
+    cd "$cwd" || exit 1
+    env \
+      WT_HOOK_PHASE="$phase" \
+      WT_PROJECT_ROOT="$PROJECT_DIR_ABS" \
+      WT_WORKTREE_NAME="$worktree_name" \
+      WT_WORKTREE_PATH="$worktree_path" \
+      WT_WORKTREE_BRANCH="$worktree_branch" \
+      sh -c "$command_line"
   )
 }
 
@@ -4076,17 +4370,54 @@ start_dev_server() {
     pid=$(cat "$pid_file" 2> /dev/null || true)
   fi
 
-  sleep 1
+  if [ -n "$port" ]; then
+    local ready_timeout="$SERVE_DEV_READY_TIMEOUT"
+    local settle_timeout="$SERVE_DEV_SETTLE_TIMEOUT"
 
-  if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; then
-    if [ -n "$port" ]; then
-      info "$(msg dev_started_port "$port")"
+    case "$ready_timeout" in
+    '' | *[!0-9]*)
+      if [ -n "${WT_DEV_READY_TIMEOUT:-}" ] && [[ ! "${WT_DEV_READY_TIMEOUT:-}" =~ [^0-9] ]]; then
+        ready_timeout="${WT_DEV_READY_TIMEOUT}"
+      else
+        ready_timeout="$CONFIG_DEFAULT_SERVE_DEV_READY_TIMEOUT"
+      fi
+      ;;
+    esac
+    case "$settle_timeout" in
+    '' | *[!0-9]*)
+      if [ -n "${WT_DEV_SETTLE_TIMEOUT:-}" ] && [[ ! "${WT_DEV_SETTLE_TIMEOUT:-}" =~ [^0-9] ]]; then
+        settle_timeout="${WT_DEV_SETTLE_TIMEOUT}"
+      else
+        settle_timeout="$CONFIG_DEFAULT_SERVE_DEV_SETTLE_TIMEOUT"
+      fi
+      ;;
+    esac
+
+    if wait_for_dev_port "$port" "$ready_timeout" "$pid"; then
+      if ! wait_for_dev_settle "$port" "$pid" "$settle_timeout"; then
+        local pid_display="${pid:-unknown}"
+        info "$(msg dev_failed "$pid_display" "$log_file")"
+      else
+        info "$(msg dev_started_port "$port")"
+      fi
     else
-      info "$(msg dev_started_default)"
+      local wait_status=$?
+      local pid_display="${pid:-unknown}"
+      if [ "$wait_status" -eq 1 ]; then
+        info "$(msg dev_failed "$pid_display" "$log_file")"
+      else
+        info "$(msg dev_timeout "$port" "$ready_timeout" "$log_file")"
+      fi
     fi
   else
-    local pid_display="${pid:-unknown}"
-    info "$(msg dev_failed "$pid_display" "$log_file")"
+    sleep 1
+
+    if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; then
+      info "$(msg dev_started_default)"
+    else
+      local pid_display="${pid:-unknown}"
+      info "$(msg dev_failed "$pid_display" "$log_file")"
+    fi
   fi
 
   info "$(msg dev_log_hint "$log_file")"
@@ -4672,6 +5003,13 @@ cmd_add() {
   shift || true
 
   [ -n "$name" ] || die "$(msg add_requires_name)"
+  if is_help_token "$name"; then
+    command_usage add
+    return
+  fi
+  if [[ "$name" == -* ]]; then
+    die "$(msg add_unknown_option "$name")"
+  fi
   if ! validate_worktree_name "$name"; then
     die "$(msg invalid_worktree_name "$name")"
   fi
@@ -4714,8 +5052,8 @@ cmd_add() {
   while [ $# -gt 0 ]; do
     case "$1" in
     -h | --help | help)
-      usage
-      exit 0
+      command_usage add
+      return
       ;;
     --)
       shift
@@ -4738,16 +5076,13 @@ cmd_add() {
   if [ "$run_dev" -eq 1 ]; then
     effective_port=$(port_from_name "$name")
 
-    if [ -z "$effective_port" ]; then
-      if [ -n "$port_candidate" ] && [ "$port_candidate" -lt 1024 ]; then
+    if [ -z "$effective_port" ] && [ -n "$port_candidate" ]; then
+      if [ "$port_candidate" -lt 1024 ]; then
         skip_dev=1
         skip_dev_port="$port_candidate"
         skip_dev_reason="reserved"
-      elif [ -n "$port_candidate" ] && [ "$port_candidate" -gt 65535 ]; then
+      elif [ "$port_candidate" -gt 65535 ]; then
         info "$(msg fallback_default_port)"
-      else
-        skip_dev=1
-        skip_dev_reason="no_port"
       fi
     fi
   fi
@@ -4810,6 +5145,10 @@ cmd_add() {
     run_install_command "$worktree_path" "$install_command"
   fi
 
+  if ! run_configured_hook_command "$ADD_POST_COMMAND" "$worktree_path" "add.post" "$name" "$worktree_path" "$branch"; then
+    die "add post-command failed"
+  fi
+
   if [ "$run_dev" -eq 1 ]; then
     if [ "$skip_dev" -eq 1 ]; then
       if [ "$skip_dev_reason" = "reserved" ]; then
@@ -4832,6 +5171,8 @@ cmd_add() {
 config_print_effective() {
   local has_language_line=0
   local has_theme_line=0
+  local has_serve_ready_timeout_line=0
+  local has_serve_settle_timeout_line=0
 
   if [ -f "$CONFIG_FILE" ]; then
     if [ -s "$CONFIG_FILE" ]; then
@@ -4840,6 +5181,12 @@ config_print_effective() {
       fi
       if grep -q '^theme=' "$CONFIG_FILE" 2> /dev/null; then
         has_theme_line=1
+      fi
+      if grep -q '^add\.serve-dev\.ready-timeout=' "$CONFIG_FILE" 2> /dev/null; then
+        has_serve_ready_timeout_line=1
+      fi
+      if grep -q '^add\.serve-dev\.settle-timeout=' "$CONFIG_FILE" 2> /dev/null; then
+        has_serve_settle_timeout_line=1
       fi
       cat "$CONFIG_FILE"
     else
@@ -4874,6 +5221,28 @@ config_print_effective() {
     printf 'theme=%s\n' "$effective_theme"
   fi
 
+  local effective_ready_timeout
+  if effective_ready_timeout=$(config_get_or_default "add.serve-dev.ready-timeout" 2> /dev/null); then
+    :
+  else
+    effective_ready_timeout="$CONFIG_DEFAULT_SERVE_DEV_READY_TIMEOUT"
+  fi
+
+  if [ "$has_serve_ready_timeout_line" -eq 0 ]; then
+    printf 'add.serve-dev.ready-timeout=%s\n' "$effective_ready_timeout"
+  fi
+
+  local effective_settle_timeout
+  if effective_settle_timeout=$(config_get_or_default "add.serve-dev.settle-timeout" 2> /dev/null); then
+    :
+  else
+    effective_settle_timeout="$CONFIG_DEFAULT_SERVE_DEV_SETTLE_TIMEOUT"
+  fi
+
+  if [ "$has_serve_settle_timeout_line" -eq 0 ]; then
+    printf 'add.serve-dev.settle-timeout=%s\n' "$effective_settle_timeout"
+  fi
+
   return 0
 }
 
@@ -4905,6 +5274,8 @@ wt config - 查看或更新 worktree.sh 配置
   add.serve-dev.enabled           是否在 wt add 后启动开发服务
   add.serve-dev.command           启动开发服务的命令（留空则自动推断）
   add.serve-dev.logging-path      Dev 服务日志所在子目录（默认: tmp）
+  add.serve-dev.ready-timeout     等待端口开始监听的秒数（默认: 60）
+  add.serve-dev.settle-timeout    端口就绪后继续观察的秒数（默认: 5，用于兼容短命启动脚本）
   theme                           wt list 的显示主题（box 或 sage，默认 box，可用 "wt theme" 切换）
 
 语言与主题:
@@ -4937,6 +5308,8 @@ Supported keys:
   add.serve-dev.enabled           Whether wt add starts the dev service
   add.serve-dev.command           Command used to start the dev service (empty = auto-detect)
   add.serve-dev.logging-path      Subdirectory for dev logs (default: tmp)
+  add.serve-dev.ready-timeout     Seconds to wait for the dev port to start listening (default: 60)
+  add.serve-dev.settle-timeout    Extra seconds to observe the port after readiness (default: 5; useful for short-lived launcher scripts)
   theme                           Theme for wt list output (box or sage; default box). Use "wt theme" to change.
 
 Language & theme:

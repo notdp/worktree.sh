@@ -295,6 +295,198 @@ theme_prompt_interactive() {
   esac
 }
 
+is_help_token() {
+  case "${1:-}" in
+  -h | --help | help)
+    return 0
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+shell_hook_usage() {
+  case "$LANGUAGE" in
+  zh)
+    cat << 'HOOK_USAGE_ZH'
+wt shell-hook 用法:
+  wt shell-hook zsh
+  wt shell-hook bash
+
+将输出通过 eval/source 加载以安装包装函数，例如：
+  eval "$(wt shell-hook zsh)"
+HOOK_USAGE_ZH
+    ;;
+  *)
+    cat << 'HOOK_USAGE_EN'
+wt shell-hook usage:
+  wt shell-hook zsh
+  wt shell-hook bash
+
+Pipe the output into eval/source to install the wrapper, e.g.
+  eval "$(wt shell-hook zsh)"
+HOOK_USAGE_EN
+    ;;
+  esac
+}
+
+uninstall_usage() {
+  case "$LANGUAGE" in
+  zh)
+    cat << 'UNINSTALL_USAGE_ZH'
+wt uninstall 用法:
+  wt uninstall [--shell <shell>] [--prefix <dir>]
+
+选项:
+  --shell <shell>   指定要清理的 shell（zsh|bash|none；默认自动检测）
+  --prefix <dir>    wt 安装目录（默认 $HOME/.local/bin）
+  --help            查看帮助
+UNINSTALL_USAGE_ZH
+    ;;
+  *)
+    cat << 'UNINSTALL_USAGE_EN'
+wt uninstall usage:
+  wt uninstall [--shell <shell>] [--prefix <dir>]
+
+Options:
+  --shell <shell>   Shell to clean hooks for (zsh|bash|none; default: auto-detect)
+  --prefix <dir>    Directory where wt is installed (default: $HOME/.local/bin)
+  --help            Show this help
+UNINSTALL_USAGE_EN
+    ;;
+  esac
+}
+
+reinstall_usage() {
+  case "$LANGUAGE" in
+  zh)
+    cat << 'REINSTALL_USAGE_ZH'
+wt reinstall 用法:
+  wt reinstall [--shell <shell>] [--prefix <dir>]
+
+说明:
+  - 先运行 uninstall.sh，再运行 install.sh
+  - 默认目标目录为 ~/.local/bin（可通过 WT_INSTALL_PREFIX 或 --prefix 覆盖）
+  - 需在包含 install.sh 与 uninstall.sh 的仓库目录中运行
+REINSTALL_USAGE_ZH
+    ;;
+  *)
+    cat << 'REINSTALL_USAGE_EN'
+wt reinstall usage:
+  wt reinstall [--shell <shell>] [--prefix <dir>]
+
+Notes:
+  - Executes uninstall.sh followed by install.sh from this checkout
+  - Targets ~/.local/bin by default (override via WT_INSTALL_PREFIX or --prefix)
+  - Must be invoked from a checkout that contains install.sh and uninstall.sh
+REINSTALL_USAGE_EN
+    ;;
+  esac
+}
+
+init_usage() {
+  case "$LANGUAGE" in
+  zh)
+    cat << 'INIT_USAGE_ZH'
+wt init 用法:
+  wt init
+
+请在目标仓库运行：
+- 创建 ~/.worktree.sh/projects/<slug>/config.kv（如不存在）。
+- 设置 repo.path 为仓库根目录（根据 git common dir 推导）。
+INIT_USAGE_ZH
+    ;;
+  *)
+    cat << 'INIT_USAGE_EN'
+wt init usage:
+  wt init
+
+Run inside the target repository:
+- Create ~/.worktree.sh/projects/<slug>/config.kv when missing.
+- Set repo.path to the repository root (derived from git common dir).
+INIT_USAGE_EN
+    ;;
+  esac
+}
+
+command_usage() {
+  local command="${1:-}"
+
+  case "$command" in
+  help)
+    msg help_usage
+    ;;
+  list)
+    msg list_usage
+    ;;
+  main)
+    msg main_usage
+    ;;
+  path)
+    msg path_usage
+    ;;
+  add)
+    msg add_usage
+    ;;
+  merge)
+    msg merge_usage
+    ;;
+  sync)
+    msg sync_usage
+    ;;
+  rm | remove)
+    msg remove_usage
+    ;;
+  clean)
+    msg clean_usage
+    ;;
+  detach)
+    msg detach_usage
+    ;;
+  config)
+    config_usage
+    ;;
+  lang)
+    msg lang_usage
+    ;;
+  theme)
+    msg theme_usage
+    ;;
+  shell-hook)
+    shell_hook_usage
+    ;;
+  init)
+    init_usage
+    ;;
+  uninstall)
+    uninstall_usage
+    ;;
+  reinstall)
+    reinstall_usage
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+maybe_print_command_help() {
+  local command="${1:-}"
+  shift || true
+
+  if [ $# -eq 0 ]; then
+    return 1
+  fi
+
+  if ! is_help_token "$1"; then
+    return 1
+  fi
+
+  command_usage "$command" || return 1
+  return 0
+}
+
 cmd_config() {
   local scope="$CURRENT_SCOPE"
   if [ $# -eq 0 ]; then
@@ -509,28 +701,7 @@ cmd_shell_hook() {
 
   case "$1" in
   -h | --help | help)
-    case "$LANGUAGE" in
-    zh)
-      cat << 'HOOK_USAGE_ZH'
-wt shell-hook 用法:
-  wt shell-hook zsh
-  wt shell-hook bash
-
-将输出通过 eval/source 加载以安装包装函数，例如：
-  eval "$(wt shell-hook zsh)"
-HOOK_USAGE_ZH
-      ;;
-    *)
-      cat << 'HOOK_USAGE_EN'
-wt shell-hook usage:
-  wt shell-hook zsh
-  wt shell-hook bash
-
-Pipe the output into eval/source to install the wrapper, e.g.
-  eval "$(wt shell-hook zsh)"
-HOOK_USAGE_EN
-      ;;
-    esac
+    shell_hook_usage
     return
     ;;
   esac
@@ -545,7 +716,7 @@ HOOK_USAGE_EN
     sed "s/__WT_BIN_PATH__/$wt_exec_path_escaped/g" << 'WT_HOOK'
 # wt shell integration: auto-cd after wt add/path/main/remove/clean
 wt() {
-  local __wt_out __wt_status __wt_cmd __wt_should_cd=0
+  local __wt_out __wt_status __wt_cmd __wt_should_cd=0 __wt_has_help=0 __wt_arg
   local __wt_bin="__WT_BIN_PATH__"
 
   if [ ! -x "$__wt_bin" ]; then
@@ -576,6 +747,15 @@ wt() {
     __wt_cmd="$1"
   fi
 
+  for __wt_arg in "$@"; do
+    case "$__wt_arg" in
+    help | -h | --help)
+      __wt_has_help=1
+      break
+      ;;
+    esac
+  done
+
   case "$__wt_cmd" in
     add|main|path)
       __wt_should_cd=1
@@ -593,6 +773,10 @@ wt() {
       __wt_should_cd=1
       ;;
   esac
+
+  if [ "$__wt_has_help" -eq 1 ]; then
+    __wt_should_cd=0
+  fi
 
   if [ $__wt_should_cd -eq 1 ] && [ -n "$__wt_out" ] && [ -d "$__wt_out" ]; then
     cd "$__wt_out" || return $?
@@ -798,30 +982,7 @@ cmd_uninstall() {
       prefix="$1"
       ;;
     -h | --help | help)
-      case "$LANGUAGE" in
-      zh)
-        cat << 'UNINSTALL_USAGE_ZH'
-wt uninstall 用法:
-  wt uninstall [--shell <shell>] [--prefix <dir>]
-
-选项:
-  --shell <shell>   指定要清理的 shell（zsh|bash|none；默认自动检测）
-  --prefix <dir>    wt 安装目录（默认 $HOME/.local/bin）
-  --help            查看帮助
-UNINSTALL_USAGE_ZH
-        ;;
-      *)
-        cat << 'UNINSTALL_USAGE_EN'
-wt uninstall usage:
-  wt uninstall [--shell <shell>] [--prefix <dir>]
-
-Options:
-  --shell <shell>   Shell to clean hooks for (zsh|bash|none; default: auto-detect)
-  --prefix <dir>    Directory where wt is installed (default: $HOME/.local/bin)
-  --help            Show this help
-UNINSTALL_USAGE_EN
-        ;;
-      esac
+      uninstall_usage
       return
       ;;
     --)
@@ -895,30 +1056,7 @@ cmd_reinstall() {
       prefix="$1"
       ;;
     -h | --help | help)
-      case "$LANGUAGE" in
-      zh)
-        cat << 'REINSTALL_USAGE_ZH'
-wt reinstall 用法:
-  wt reinstall [--shell <shell>] [--prefix <dir>]
-
-说明:
-  - 先运行 uninstall.sh，再运行 install.sh
-  - 默认目标目录为 ~/.local/bin（可通过 WT_INSTALL_PREFIX 或 --prefix 覆盖）
-  - 需在包含 install.sh 与 uninstall.sh 的仓库目录中运行
-REINSTALL_USAGE_ZH
-        ;;
-      *)
-        cat << 'REINSTALL_USAGE_EN'
-wt reinstall usage:
-  wt reinstall [--shell <shell>] [--prefix <dir>]
-
-Notes:
-  - Executes uninstall.sh followed by install.sh from this checkout
-  - Targets ~/.local/bin by default (override via WT_INSTALL_PREFIX or --prefix)
-  - Must be invoked from a checkout that contains install.sh and uninstall.sh
-REINSTALL_USAGE_EN
-        ;;
-      esac
+      reinstall_usage
       return
       ;;
     --)
@@ -1118,28 +1256,7 @@ cmd_init() {
       assume_yes=1
       ;;
     --help | help)
-      case "$LANGUAGE" in
-      zh)
-        cat << 'INIT_USAGE_ZH'
-wt init 用法:
-  wt init
-
-请在目标仓库运行：
-- 创建 ~/.worktree.sh/projects/<slug>/config.kv（如不存在）。
-- 设置 repo.path 为仓库根目录（根据 git common dir 推导）。
-INIT_USAGE_ZH
-        ;;
-      *)
-        cat << 'INIT_USAGE_EN'
-wt init usage:
-  wt init
-
-Run inside the target repository:
-- Create ~/.worktree.sh/projects/<slug>/config.kv when missing.
-- Set repo.path to the repository root (derived from git common dir).
-INIT_USAGE_EN
-        ;;
-      esac
+      init_usage
       return
       ;;
     -*)
@@ -1869,7 +1986,15 @@ remove_worktree_by_name() {
   fi
 
   local branch=""
-  branch=$(branch_for "$name")
+  if ! branch=$(worktree_branch_for_path "$target_path" 2> /dev/null); then
+    branch=""
+  fi
+
+  validate_removable_worktree_branch "$name" "$branch" "$WORKTREE_BRANCH_PREFIX" || true
+
+  if ! run_configured_hook_command "$REMOVE_PRE_COMMAND" "$PROJECT_DIR_ABS" "remove.pre" "$name" "$target_path" "$branch"; then
+    die "remove pre-command failed"
+  fi
 
   info "$(msg removing_worktree "$target_path")"
   local removal_succeeded=0
@@ -1888,9 +2013,11 @@ remove_worktree_by_name() {
     die "$(msg remove_failed)"
   fi
 
-  if [ -n "$branch" ] && git_project show-ref --verify --quiet "refs/heads/$branch"; then
-    git_project branch -D "$branch" >&2 || true
-    info "$(msg removed_branch "$branch")"
+  if [ -n "$WT_VALIDATED_REMOVE_BRANCH" ] && git_project show-ref --verify --quiet "refs/heads/$WT_VALIDATED_REMOVE_BRANCH"; then
+    git_project branch -D "$WT_VALIDATED_REMOVE_BRANCH" >&2 || true
+    info "$(msg removed_branch "$WT_VALIDATED_REMOVE_BRANCH")"
+  else
+    log_skipped_branch_removal "$target_path" "$branch"
   fi
 
   info "$(msg worktree_removed "$name")"
@@ -2161,8 +2288,8 @@ cmd_remove() {
       assume_yes=1
       ;;
     -h | --help | help)
-      usage
-      exit 0
+      command_usage rm
+      return
       ;;
     -*)
       die "$(msg remove_unknown_option "$1")"
@@ -2220,8 +2347,8 @@ cmd_remove_global() {
       assume_yes=1
       ;;
     -h | --help | help)
-      usage
-      exit 0
+      command_usage rm
+      return
       ;;
     -*)
       die "$(msg remove_unknown_option "$1")"
@@ -2281,19 +2408,14 @@ cmd_remove_global() {
         fi
       fi
 
-      if [ -z "$branch_name" ]; then
-        if [ -z "$branch_prefix" ]; then
-          branch_prefix="$CONFIG_DEFAULT_WORKTREE_ADD_BRANCH_PREFIX"
-        fi
-        if [ -n "$branch_prefix" ]; then
-          branch_name="${branch_prefix}${name}"
-        fi
-      fi
+      validate_removable_worktree_branch "$name" "$branch_name" "$branch_prefix" || true
 
       info "$(msg removing_worktree "$target_path")"
       if git_at_path "$repo_path" worktree remove "$target_path" --force >&2; then
-        if [ -n "$branch_name" ]; then
-          git_at_path "$repo_path" branch -D "$branch_name" > /dev/null 2>&1 || true
+        if [ -n "$WT_VALIDATED_REMOVE_BRANCH" ]; then
+          git_at_path "$repo_path" branch -D "$WT_VALIDATED_REMOVE_BRANCH" > /dev/null 2>&1 || true
+        else
+          log_skipped_branch_removal "$target_path" "$branch_name"
         fi
         git_at_path "$repo_path" worktree prune --expire now >&2 || true
         info "$(msg worktree_removed "$target_path")"
@@ -2322,8 +2444,8 @@ cmd_detach() {
       force=1
       ;;
     -h | --help | help)
-      usage
-      exit 0
+      command_usage detach
+      return
       ;;
     --*)
       die "$(msg detach_unknown_option "$1")"
@@ -2405,9 +2527,16 @@ cmd_clean() {
         suffix="${base#"$WORKTREE_NAME_PREFIX"}"
         if [[ "$suffix" =~ ^[0-9]+$ ]]; then
           info "$(msg cleaning_worktree "$suffix")"
+          if ! branch_name=$(worktree_branch_for_path "$worktree_path" 2> /dev/null); then
+            branch_name=""
+          fi
+          validate_removable_worktree_branch "$suffix" "$branch_name" "$WORKTREE_BRANCH_PREFIX" || true
           git_project worktree remove "$worktree_path" --force >&2 || true
-          branch_name=$(branch_for "$suffix")
-          git_project branch -D "$branch_name" > /dev/null 2>&1 || true
+          if [ -n "$WT_VALIDATED_REMOVE_BRANCH" ]; then
+            git_project branch -D "$WT_VALIDATED_REMOVE_BRANCH" > /dev/null 2>&1 || true
+          else
+            log_skipped_branch_removal "$worktree_path" "$branch_name"
+          fi
           removed=$((removed + 1))
           if [ "$current_abs" = "$worktree_path" ]; then
             current_removed=1
@@ -2524,18 +2653,14 @@ cmd_clean_global() {
       continue
     fi
 
+    validate_removable_worktree_branch "$suffix" "$branch_name" "$branch_prefix" || true
+
     info "$(msg cleaning_worktree "$suffix")"
     if git_at_path "$repo_path" worktree remove "$wt_path" --force >&2; then
-      if [ -z "$branch_name" ]; then
-        if [ -z "$branch_prefix" ]; then
-          branch_prefix="$CONFIG_DEFAULT_WORKTREE_ADD_BRANCH_PREFIX"
-        fi
-        if [ -n "$branch_prefix" ]; then
-          branch_name="${branch_prefix}${suffix}"
-        fi
-      fi
-      if [ -n "$branch_name" ]; then
-        git_at_path "$repo_path" branch -D "$branch_name" > /dev/null 2>&1 || true
+      if [ -n "$WT_VALIDATED_REMOVE_BRANCH" ]; then
+        git_at_path "$repo_path" branch -D "$WT_VALIDATED_REMOVE_BRANCH" > /dev/null 2>&1 || true
+      else
+        log_skipped_branch_removal "$wt_path" "$branch_name"
       fi
       git_at_path "$repo_path" worktree prune --expire now >&2 || true
       removed=$((removed + 1))
@@ -2593,6 +2718,10 @@ wt_main() {
   scope=$(current_scope)
   CURRENT_SCOPE="$scope"
 
+  if [ "$command" != "help" ] && maybe_print_command_help "$command" "$@"; then
+    return
+  fi
+
   case "$command" in
   config)
     cmd_config "$@"
@@ -2623,7 +2752,16 @@ wt_main() {
     return
     ;;
   help)
-    usage
+    if [ $# -eq 0 ]; then
+      usage
+      return
+    fi
+    if [ $# -gt 1 ]; then
+      die "$(msg unexpected_extra_argument "$2")"
+    fi
+    if ! command_usage "$1"; then
+      usage_exit 1
+    fi
     return
     ;;
   version)

@@ -8,3 +8,7 @@ add.install-deps.command=npm ci
 add.serve-dev.enabled=true
 add.serve-dev.command=npm run dev
 add.serve-dev.logging-path=tmp
+add.serve-dev.ready-timeout=60
+add.serve-dev.settle-timeout=5
+add.post-command=bash "$WT_PROJECT_ROOT/scripts/post-add.sh"
+remove.pre-command=bash "$WT_PROJECT_ROOT/scripts/pre-remove.sh"
